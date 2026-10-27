@@ -70,12 +70,48 @@ export function resolveServerReference<T>(
   const idx = id.lastIndexOf('#');
   const exportName = id.slice(idx + 1);
   const fullURL = id.slice(0, idx);
-  if (!fullURL.startsWith(baseURL)) {
+  if (idx === -1 || !isWithinHostedRoot(fullURL, baseURL)) {
     throw new Error(
       'Attempted to load a Server Reference outside the hosted root.',
     );
   }
   return {specifier: fullURL, name: exportName};
+}
+
+// Matches "." or ".." path segments, backslashes, and percent-encoded dots,
+// slashes or backslashes, all of which can be used to escape the root.
+const unsafePathPattern = /(?:^|[\/\\])\.{1,2}(?:[\/\\?#]|$)|\\|%(?:2e|2f|5c)/i;
+
+function canonicalizeURL(url: string): null | string {
+  try {
+    // Resolve against a dummy base so that both absolute URLs and plain paths
+    // are normalized the same way.
+    const parsed = new URL(url, 'file:///');
+    return parsed.protocol + '//' + parsed.host + parsed.pathname;
+  } catch (x) {
+    return null;
+  }
+}
+
+function isWithinHostedRoot(fullURL: string, baseURL: string): boolean {
+  if (unsafePathPattern.test(fullURL)) {
+    return false;
+  }
+  if (!fullURL.startsWith(baseURL)) {
+    return false;
+  }
+  const canonicalFullURL = canonicalizeURL(fullURL);
+  let canonicalBaseURL = canonicalizeURL(baseURL);
+  if (canonicalFullURL === null || canonicalBaseURL === null) {
+    return false;
+  }
+  if (!canonicalBaseURL.endsWith('/')) {
+    canonicalBaseURL += '/';
+  }
+  return (
+    canonicalFullURL.length > canonicalBaseURL.length &&
+    canonicalFullURL.startsWith(canonicalBaseURL)
+  );
 }
 
 const asyncModuleCache: Map<string, Thenable<any>> = new Map();
