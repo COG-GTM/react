@@ -11,7 +11,12 @@
 'use strict';
 
 let ReactServerDOMServer;
-let resolveServerReference;
+
+// The resolver is internal, so it can only be required in source tests.
+function getResolveServerReference() {
+  return require('react-server-dom-esm/src/client/ReactFlightClientConfigBundlerESM')
+    .resolveServerReference;
+}
 
 const moduleBasePath = 'file:///app/src';
 const OUTSIDE_ROOT =
@@ -47,11 +52,11 @@ describe('ReactFlightESMServerReference', () => {
       require('react-server-dom-esm/server.node'),
     );
     ReactServerDOMServer = require('react-server-dom-esm/server');
-    resolveServerReference =
-      require('react-server-dom-esm/src/client/ReactFlightClientConfigBundlerESM').resolveServerReference;
   });
 
+  // @gate source
   it('resolves server references inside the hosted root', () => {
+    const resolveServerReference = getResolveServerReference();
     expect(
       resolveServerReference(moduleBasePath, moduleBasePath + '/actions.js#a'),
     ).toEqual({specifier: moduleBasePath + '/actions.js', name: 'a'});
@@ -72,7 +77,9 @@ describe('ReactFlightESMServerReference', () => {
     ).toEqual({specifier: 'file:///My%20App/src/a..b/actions.js', name: 'a'});
   });
 
+  // @gate source
   it('rejects server references outside the hosted root', () => {
+    const resolveServerReference = getResolveServerReference();
     for (let i = 0; i < outsideRootIds.length; i++) {
       expect(() =>
         resolveServerReference(moduleBasePath, outsideRootIds[i]),
@@ -80,7 +87,9 @@ describe('ReactFlightESMServerReference', () => {
     }
   });
 
+  // @gate source
   it('rejects path traversal in plain path roots', () => {
+    const resolveServerReference = getResolveServerReference();
     expect(() =>
       resolveServerReference(
         '/app/src/',
