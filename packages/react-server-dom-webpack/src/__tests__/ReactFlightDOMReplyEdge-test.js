@@ -380,7 +380,7 @@ describe('ReactFlightDOMReplyEdge', () => {
   });
 
   it('rejects references to prototype properties', async () => {
-    for (const reference of [
+    const references = [
       '$1:__proto__',
       '$1:constructor',
       '$1:constructor:constructor',
@@ -388,8 +388,12 @@ describe('ReactFlightDOMReplyEdge', () => {
       '$1:then',
       '$1:value',
       '$1:_response',
-    ]) {
-      for (const target of ['{}', '"$@2"']) {
+    ];
+    const targets = ['{}', '"$@2"'];
+    for (let i = 0; i < references.length; i++) {
+      const reference = references[i];
+      for (let j = 0; j < targets.length; j++) {
+        const target = targets[j];
         const body = new FormData();
         body.append('0', JSON.stringify({x: reference}));
         body.append('1', target);

@@ -33,6 +33,7 @@ import {
 import {ASYNC_ITERATOR} from 'shared/ReactSymbols';
 
 import hasOwnProperty from 'shared/hasOwnProperty';
+import getPrototypeOf from 'shared/getPrototypeOf';
 
 interface FlightStreamController {
   enqueueModel(json: string): void;
@@ -128,7 +129,7 @@ Chunk.prototype.then = function <T>(
   this: SomeChunk<T>,
   resolve: (value: T) => mixed,
   reject: (reason: mixed) => mixed,
-) {
+): void {
   const chunk: SomeChunk<T> = this;
   if (!isChunk(chunk)) {
     // Never treat a decoded value as one of our internal chunks, even if it
@@ -178,17 +179,20 @@ function isChunk(value: mixed): boolean {
   return (
     typeof value === 'object' &&
     value !== null &&
-    Object.getPrototypeOf(value) === Chunk.prototype
+    getPrototypeOf(value) === Chunk.prototype
   );
 }
+
+const ObjectPrototype = Object.prototype;
+const ArrayPrototype = Array.prototype;
 
 function isPlainModelValue(value: mixed): boolean {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
-  const proto = Object.getPrototypeOf(value);
+  const proto = getPrototypeOf(value);
   return (
-    proto === Object.prototype || proto === Array.prototype || proto === null
+    proto === ObjectPrototype || proto === ArrayPrototype || proto === null
   );
 }
 
@@ -1238,17 +1242,16 @@ export function close(response: Response): void {
 }
 
 export function validateBoundActionMetaData(metaData: mixed): {
-  id: string,
-  bound: null | Thenable<Array<any>>,
+  id: ServerReferenceId,
+  bound: null | Promise<Array<any>>,
 } {
+  const value: any = metaData;
   if (
-    !isPlainModelValue(metaData) ||
-    // $FlowFixMe[incompatible-use]
-    typeof metaData.id !== 'string' ||
-    // $FlowFixMe[incompatible-use]
-    (metaData.bound != null && !isChunk(metaData.bound))
+    !isPlainModelValue(value) ||
+    typeof value.id !== 'string' ||
+    (value.bound != null && !isChunk(value.bound))
   ) {
     throw new Error('Invalid server reference.');
   }
-  return (metaData: any);
+  return value;
 }
