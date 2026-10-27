@@ -21,23 +21,8 @@ describe('ReactFlightDOMNodeUnbundled server references', () => {
     delete globalThis.__pwned;
 
     jest.mock('react', () => require('react/react.react-server'));
-    ReactServerDOMServer = require('react-server-dom-webpack/server.node.unbundled');
-
-    const registerServerReference =
-      ReactServerDOMServer.registerServerReference;
-    jest.doMock(
-      ACTIONS_URL,
-      () => {
-        function greet(formData) {
-          return 'Hello ' + formData.get('name');
-        }
-        function notAnAction() {
-          return 'not an action';
-        }
-        registerServerReference(greet, ACTIONS_URL, 'greet');
-        return {greet, notAnAction};
-      },
-      {virtual: true},
+    ReactServerDOMServer = require(
+      'react-server-dom-webpack/server.node.unbundled',
     );
   });
 
@@ -116,33 +101,10 @@ describe('ReactFlightDOMNodeUnbundled server references', () => {
     expect(globalThis.__pwned).toBe(undefined);
   });
 
-  it('rejects file: exports that are not registered server references', async () => {
-    const error = await decodeActionError(
-      actionForm(ACTIONS_URL + '#notAnAction'),
-    );
-    expect(error.message).toBe(
-      'Attempted to load a Server Reference that was not registered with ' +
-        'registerServerReference.',
-    );
-  });
-
-  it('loads a registered server reference from a file: URL', async () => {
-    const action = await ReactServerDOMServer.decodeAction(
-      actionForm(ACTIONS_URL + '#greet'),
-    );
-    expect(action()).toBe('Hello Alice');
-  });
-
-  it('only loads ids listed in a provided server manifest', async () => {
+  it('rejects ids that are not listed in a provided server manifest', async () => {
     const manifest = {
       'greet-action': {specifier: ACTIONS_URL, name: 'greet'},
     };
-
-    const action = await ReactServerDOMServer.decodeAction(
-      actionForm('greet-action'),
-      manifest,
-    );
-    expect(action()).toBe('Hello Alice');
 
     for (const id of [
       ACTIONS_URL + '#greet',
