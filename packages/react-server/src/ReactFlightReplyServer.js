@@ -604,6 +604,11 @@ function createModelResolver<T>(
     } catch (error) {
       if (chunk.status === PENDING || chunk.status === BLOCKED) {
         triggerErrorOnChunk(chunk, error);
+      } else if (chunk.status === INITIALIZED) {
+        // A cyclic reference can resolve after its chunk was initialized.
+        const erroredChunk: ErroredChunk<T> = (chunk: any);
+        erroredChunk.status = ERRORED;
+        erroredChunk.reason = error;
       }
       return;
     }

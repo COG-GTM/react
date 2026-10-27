@@ -350,6 +350,22 @@ describe('ReactFlightDOMReplyEdge', () => {
     expect(decoded.c).toEqual({value: 'hello'});
   });
 
+  it('rejects invalid cyclic references instead of resolving them to null', async () => {
+    const body = new FormData();
+    body.append('0', '{"a":"$0:missing"}');
+    await expect(
+      ReactServerDOMServer.decodeReply(body, webpackServerMap),
+    ).rejects.toThrow('Invalid reference.');
+
+    const body2 = new FormData();
+    body2.append('0', '{"a":"$0:b","b":1}');
+    const result = await ReactServerDOMServer.decodeReply(
+      body2,
+      webpackServerMap,
+    );
+    expect(result).toEqual({a: 1, b: 1});
+  });
+
   it('does not resolve references through prototype properties', async () => {
     const body = new FormData();
     body.append('1', '{}');
