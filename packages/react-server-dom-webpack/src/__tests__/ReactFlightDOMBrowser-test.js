@@ -3116,19 +3116,10 @@ describe('ReactFlightDOMBrowser', () => {
     push('0:{"proto":"$1:a:__proto__"}');
 
     const response = ReactServerDOMClient.createFromReadableStream(stream);
-    let result = null;
-    response.then(
-      value => {
-        result = {value};
-      },
-      error => {
-        result = {error};
-      },
-    );
+    await 0;
     push('1:{"a":{}}');
     close();
     await expect(response).rejects.toThrow('Invalid reference.');
-    expect(result.error.message).toBe('Invalid reference.');
   });
 
   it('still resolves references to own properties of decoded objects', async () => {
