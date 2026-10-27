@@ -4579,6 +4579,23 @@ function renderDebugModel(
     return null;
   }
 
+  if (enableTaint) {
+    // Debug info (props, console args, IO values) is sent to the client too, so
+    // tainted values must not leak through it. The replacer turns this error
+    // into an "Unknown Value" placeholder.
+    if (typeof value === 'object' || typeof value === 'function') {
+      const tainted = TaintRegistryObjects.get(value);
+      if (tainted !== undefined) {
+        throwTaintViolation(tainted);
+      }
+    } else if (typeof value === 'string' || typeof value === 'bigint') {
+      const tainted = TaintRegistryValues.get(value);
+      if (tainted !== undefined) {
+        throwTaintViolation(tainted.message);
+      }
+    }
+  }
+
   // Special Symbol, that's very common.
   if (value === REACT_ELEMENT_TYPE) {
     return '$';
