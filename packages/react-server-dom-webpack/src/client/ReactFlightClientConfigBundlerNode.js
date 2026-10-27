@@ -176,7 +176,7 @@ export function requireModule<T>(metadata: ClientReference<T>): T {
     // Only exports that were registered as Server References with this exact
     // id may be returned for a Server Reference.
     const name = metadata.name;
-    const value =
+    const value: any =
       moduleExports != null && hasOwnProperty.call(moduleExports, name)
         ? moduleExports[name]
         : undefined;
