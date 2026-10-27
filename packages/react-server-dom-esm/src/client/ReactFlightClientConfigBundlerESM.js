@@ -62,19 +62,61 @@ export function resolveClientReference<T>(
   };
 }
 
+// Characters and escapes that the URL parser or the module resolver can turn
+// into path separators or dot segments: backslashes, tab/CR/LF (stripped by
+// the URL parser) and percent-encoded ".", "/" and "\".
+const unsafeServerReferencePathPattern = /[\\\t\n\r]|%(?:2e|2f|5c)/i;
+
+function isServerReferenceInsideRoot(
+  rootURL: string,
+  fullURL: string,
+): boolean {
+  if (fullURL.length <= rootURL.length || !fullURL.startsWith(rootURL)) {
+    return false;
+  }
+  const relativePath = fullURL.slice(rootURL.length);
+  if (unsafeServerReferencePathPattern.test(relativePath)) {
+    return false;
+  }
+  const segments = relativePath.split('/');
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    if (segment === '.' || segment === '..') {
+      return false;
+    }
+  }
+  // Also compare the canonical forms, which is what import() will resolve.
+  try {
+    const canonicalRoot = new URL(rootURL, 'file:///').href;
+    const canonicalURL = new URL(fullURL, 'file:///').href;
+    if (
+      canonicalURL.length <= canonicalRoot.length ||
+      !canonicalURL.startsWith(canonicalRoot)
+    ) {
+      return false;
+    }
+  } catch (x) {
+    return false;
+  }
+  return true;
+}
+
 export function resolveServerReference<T>(
   config: ServerManifest,
   id: ServerReferenceId,
 ): ClientReference<T> {
   const baseURL: string = config;
-  const idx = id.lastIndexOf('#');
-  const exportName = id.slice(idx + 1);
-  const fullURL = id.slice(0, idx);
-  if (!fullURL.startsWith(baseURL)) {
+  // The root must end in a separator so that sibling directories sharing the
+  // same prefix (e.g. "/app/src-secret" for "/app/src") are not inside it.
+  const rootURL = baseURL.endsWith('/') ? baseURL : baseURL + '/';
+  const idx = typeof id === 'string' ? id.lastIndexOf('#') : -1;
+  if (idx === -1 || !isServerReferenceInsideRoot(rootURL, id.slice(0, idx))) {
     throw new Error(
       'Attempted to load a Server Reference outside the hosted root.',
     );
   }
+  const exportName = id.slice(idx + 1);
+  const fullURL = id.slice(0, idx);
   return {specifier: fullURL, name: exportName};
 }
 
