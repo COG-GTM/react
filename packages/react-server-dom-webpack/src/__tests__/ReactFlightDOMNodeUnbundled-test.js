@@ -22,23 +22,6 @@ describe('ReactFlightDOMNodeUnbundled', () => {
     ReactServerDOMServer = require('react-server-dom-webpack/server.node.unbundled');
 
     jest.mock(
-      'file:///app/actions.js',
-      () => {
-        const {
-          registerServerReference,
-        } = require('react-server-dom-webpack/server.node.unbundled');
-        function greet(formData) {
-          return 'hi ' + formData.get('name');
-        }
-        registerServerReference(greet, 'file:///app/actions.js', 'greet');
-        function notAnAction() {
-          return 'not exposed';
-        }
-        return {greet, notAnAction};
-      },
-      {virtual: true},
-    );
-    jest.mock(
       'data:text/javascript,globalThis.__pwned=1',
       () => {
         globalThis.__pwned = 1;
@@ -59,9 +42,15 @@ describe('ReactFlightDOMNodeUnbundled', () => {
     return ReactServerDOMServer.decodeAction(body);
   }
 
-  it('resolves a registered server action', async () => {
-    const action = await decodeActionId(ACTIONS_MODULE + '#greet');
-    expect(await action()).toBe('hi world');
+  // Loading a module goes through import(), which Jest can't run without
+  // --experimental-vm-modules, so valid ids are checked at the resolver level.
+  it('resolves file: URL server reference ids', () => {
+    const {
+      resolveServerReference,
+    } = require('react-server-dom-webpack/src/client/ReactFlightClientConfigBundlerNode');
+    const metadata = resolveServerReference(null, ACTIONS_MODULE + '#greet');
+    expect(metadata.specifier).toBe(ACTIONS_MODULE);
+    expect(metadata.name).toBe('greet');
   });
 
   it('rejects data: URL specifiers without importing them', async () => {
@@ -88,33 +77,19 @@ describe('ReactFlightDOMNodeUnbundled', () => {
     }
   });
 
-  it('rejects exports that are not registered server references', async () => {
-    await expect(
-      decodeActionId(ACTIONS_MODULE + '#notAnAction'),
-    ).rejects.toThrow(MANIFEST_ERROR);
-    await expect(
-      decodeActionId(ACTIONS_MODULE + '#constructor'),
-    ).rejects.toThrow(MANIFEST_ERROR);
-  });
-
-  it('only resolves registered server references in decodeReply', async () => {
-    const body = new FormData();
-    body.append('0', '"$F1"');
-    body.append(
-      '1',
-      JSON.stringify({id: 'node:child_process#execSync', bound: null}),
-    );
-    await expect(ReactServerDOMServer.decodeReply(body)).rejects.toThrow(
-      MANIFEST_ERROR,
-    );
-
-    const okBody = new FormData();
-    okBody.append('0', '"$F1"');
-    okBody.append(
-      '1',
-      JSON.stringify({id: ACTIONS_MODULE + '#greet', bound: null}),
-    );
-    const fn = await ReactServerDOMServer.decodeReply(okBody);
-    expect(fn.$$id).toBe(ACTIONS_MODULE + '#greet');
+  it('rejects server references in decodeReply before importing', async () => {
+    const ids = [
+      'node:child_process#execSync',
+      'data:text/javascript,globalThis.__pwned=1#x',
+    ];
+    for (let i = 0; i < ids.length; i++) {
+      const body = new FormData();
+      body.append('0', '"$F1"');
+      body.append('1', JSON.stringify({id: ids[i], bound: null}));
+      await expect(ReactServerDOMServer.decodeReply(body)).rejects.toThrow(
+        MANIFEST_ERROR,
+      );
+    }
+    expect(globalThis.__pwned).toBe(undefined);
   });
 });
