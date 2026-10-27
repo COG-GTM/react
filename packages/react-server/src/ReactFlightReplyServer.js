@@ -128,7 +128,7 @@ Chunk.prototype.then = function <T>(
   this: SomeChunk<T>,
   resolve: (value: T) => mixed,
   reject: (reason: mixed) => mixed,
-) {
+): void {
   const chunk: SomeChunk<T> = this;
   if (!(chunk instanceof Chunk)) {
     // Only internal chunks may be resolved through this method. Anything else
