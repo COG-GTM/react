@@ -83,8 +83,8 @@ describe('ReactFlightDOMNodeUnbundled', () => {
       'file://host/actions.js#greet',
       'file:///app/actions.js',
     ];
-    for (const id of ids) {
-      await expect(decodeActionId(id)).rejects.toThrow(MANIFEST_ERROR);
+    for (let i = 0; i < ids.length; i++) {
+      await expect(decodeActionId(ids[i])).rejects.toThrow(MANIFEST_ERROR);
     }
   });
 
