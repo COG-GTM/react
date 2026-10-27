@@ -128,8 +128,13 @@ Chunk.prototype.then = function <T>(
   this: SomeChunk<T>,
   resolve: (value: T) => mixed,
   reject: (reason: mixed) => mixed,
-) {
+): void {
   const chunk: SomeChunk<T> = this;
+  if (!(chunk instanceof Chunk)) {
+    // Only internal chunks may be resolved through this method. Anything else
+    // could be an object decoded from the request pretending to be a chunk.
+    throw new Error('Invalid chunk.');
+  }
   // If we have resolved content, we try to initialize it first which
   // might put us back into one of the other states.
   switch (chunk.status) {
@@ -173,6 +178,38 @@ export type Response = {
   _closedReason: mixed,
   _temporaryReferences: void | TemporaryReferenceSet,
 };
+
+export function validateBoundArgs(bound: mixed): void {
+  if (bound !== null && !(bound instanceof Chunk) && !Array.isArray(bound)) {
+    throw new Error('Invalid bound arguments for a Server Reference.');
+  }
+}
+
+const ObjectPrototype = Object.prototype;
+const ArrayPrototype = Array.prototype;
+
+function resolveReferencePath(value: any, path: Array<string>): any {
+  for (let i = 1; i < path.length; i++) {
+    const name = path[i];
+    if (typeof value !== 'object' || value === null) {
+      throw new Error('Invalid reference.');
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (
+      (proto !== ObjectPrototype &&
+        proto !== ArrayPrototype &&
+        proto !== null) ||
+      name === '__proto__' ||
+      !hasOwnProperty.call(value, name)
+    ) {
+      // Only step into own properties of plain objects and arrays decoded
+      // from the payload. Never into prototypes or internal objects.
+      throw new Error('Invalid reference.');
+    }
+    value = value[name];
+  }
+  return value;
+}
 
 export function getRoot<T>(response: Response): Thenable<T> {
   const chunk = getChunk(response, 0);
@@ -352,6 +389,7 @@ function loadServerReference<T>(
   // the relevant modules already loaded but it allows for lazy loading of code
   // if needed.
   const preloadPromise = preloadModule(serverReference);
+  validateBoundArgs(bound);
   let promise: Promise<T>;
   if (bound) {
     promise = Promise.all([(bound: any), preloadPromise]).then(
@@ -561,8 +599,18 @@ function createModelResolver<T>(
     };
   }
   return value => {
-    for (let i = 1; i < path.length; i++) {
-      value = value[path[i]];
+    try {
+      value = resolveReferencePath(value, path);
+    } catch (error) {
+      if (chunk.status === PENDING || chunk.status === BLOCKED) {
+        triggerErrorOnChunk(chunk, error);
+      } else if (chunk.status === INITIALIZED) {
+        // A cyclic reference can resolve after its chunk was initialized.
+        const erroredChunk: ErroredChunk<T> = (chunk: any);
+        erroredChunk.status = ERRORED;
+        erroredChunk.reason = error;
+      }
+      return;
     }
     parentObject[key] = map(response, value);
 
@@ -610,10 +658,7 @@ function getOutlinedModel<T>(
   // The status might have changed after initialization.
   switch (chunk.status) {
     case INITIALIZED:
-      let value = chunk.value;
-      for (let i = 1; i < path.length; i++) {
-        value = value[path[i]];
-      }
+      const value = resolveReferencePath(chunk.value, path);
       return map(response, value);
     case PENDING:
     case BLOCKED:
