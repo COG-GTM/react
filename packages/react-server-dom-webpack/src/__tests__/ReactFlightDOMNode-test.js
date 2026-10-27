@@ -1136,4 +1136,35 @@ describe('ReactFlightDOMNode', () => {
       'Switched to client rendering because the server rendering errored:\n\nssr-throw',
     );
   });
+
+  it('rejects base64 encoded busboy file parts without throwing', async () => {
+    const EventEmitter = require('events');
+    const busboy = new EventEmitter();
+    const root = ReactServerDOMServer.decodeReplyFromBusboy(busboy, {});
+
+    const file = new Stream.PassThrough();
+    expect(() => {
+      busboy.emit('file', '1', file, {
+        filename: 'payload.txt',
+        encoding: 'Base64',
+        mimeType: 'text/plain',
+      });
+    }).not.toThrow();
+    // The rejected part is drained so the upload doesn't stall.
+    expect(file.readableFlowing).toBe(true);
+    file.end('aGVsbG8=');
+
+    busboy.emit('finish');
+
+    let error;
+    try {
+      await root;
+    } catch (x) {
+      error = x;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain(
+      "React doesn't accept base64 encoded file uploads",
+    );
+  });
 });
