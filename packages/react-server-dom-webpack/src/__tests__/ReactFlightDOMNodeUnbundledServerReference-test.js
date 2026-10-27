@@ -56,14 +56,16 @@ describe('ReactFlightDOMNodeUnbundled server references', () => {
   });
 
   it('rejects Node built-ins and bare specifiers', async () => {
-    for (const id of [
+    const ids = [
       'node:child_process#execSync',
       'child_process#execSync',
       './actions.js#greet',
       '/app/src/actions.js#greet',
       'file:#greet',
       ACTIONS_URL,
-    ]) {
+    ];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
       const error = await decodeActionError(actionForm(id));
       expect(error.message).toBe(
         'Attempted to load a Server Reference outside the hosted root.',
@@ -106,13 +108,15 @@ describe('ReactFlightDOMNodeUnbundled server references', () => {
       'greet-action': {specifier: ACTIONS_URL, name: 'greet'},
     };
 
-    for (const id of [
+    const ids = [
       ACTIONS_URL + '#greet',
       PAYLOAD_URL + '#x',
       '__proto__',
       'constructor',
       'hasOwnProperty',
-    ]) {
+    ];
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
       const error = await decodeActionError(actionForm(id), manifest);
       expect(error.message).toBe(
         'Could not find the module "' +
