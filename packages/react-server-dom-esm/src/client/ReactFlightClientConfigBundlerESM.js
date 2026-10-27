@@ -26,6 +26,8 @@ export type ServerReferenceId = string;
 
 import {prepareDestinationForModuleImpl} from 'react-client/src/ReactFlightClientConfig';
 
+import hasOwnProperty from 'shared/hasOwnProperty';
+
 export opaque type ClientReferenceMetadata = [
   string, // module path
   string, // export name
@@ -120,7 +122,10 @@ export function requireModule<T>(metadata: ClientReference<T>): T {
   } else {
     throw promise.reason;
   }
-  return moduleExports[metadata.name];
+  if (hasOwnProperty.call(moduleExports, metadata.name)) {
+    return moduleExports[metadata.name];
+  }
+  return (undefined: any);
 }
 
 // We cache ReactIOInfo across requests so that inner refreshes can dedupe with outer.

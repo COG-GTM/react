@@ -33,6 +33,7 @@ import {
 import {ASYNC_ITERATOR} from 'shared/ReactSymbols';
 
 import hasOwnProperty from 'shared/hasOwnProperty';
+import getPrototypeOf from 'shared/getPrototypeOf';
 
 interface FlightStreamController {
   enqueueModel(json: string): void;
@@ -128,8 +129,18 @@ Chunk.prototype.then = function <T>(
   this: SomeChunk<T>,
   resolve: (value: T) => mixed,
   reject: (reason: mixed) => mixed,
-) {
+): void {
   const chunk: SomeChunk<T> = this;
+  if (!isChunk(chunk)) {
+    // Never treat a decoded value as one of our internal chunks, even if it
+    // borrowed this method. Its fields are untrusted request data.
+    const error = new Error('Invalid reference.');
+    if (typeof reject === 'function') {
+      reject(error);
+      return;
+    }
+    throw error;
+  }
   // If we have resolved content, we try to initialize it first which
   // might put us back into one of the other states.
   switch (chunk.status) {
@@ -163,6 +174,46 @@ Chunk.prototype.then = function <T>(
       break;
   }
 };
+
+function isChunk(value: mixed): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    getPrototypeOf(value) === Chunk.prototype
+  );
+}
+
+const ObjectPrototype = Object.prototype;
+const ArrayPrototype = Array.prototype;
+
+function isPlainModelValue(value: mixed): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const proto = getPrototypeOf(value);
+  return (
+    proto === ObjectPrototype || proto === ArrayPrototype || proto === null
+  );
+}
+
+// Walks a reference path ("<id>:<key>:<key>...") through a decoded model. Only
+// own properties of plain objects and arrays produced by the decoder may be
+// traversed, so a reference can never reach prototype members such as
+// `__proto__`, `constructor` or `then`, nor the internals of a chunk.
+function resolvePath(value: any, path: Array<string>): any {
+  for (let i = 1; i < path.length; i++) {
+    const name = path[i];
+    if (
+      !isPlainModelValue(value) ||
+      name === '__proto__' ||
+      !hasOwnProperty.call(value, name)
+    ) {
+      throw new Error('Invalid reference.');
+    }
+    value = value[name];
+  }
+  return value;
+}
 
 export type Response = {
   _bundlerConfig: ServerManifest,
@@ -353,6 +404,9 @@ function loadServerReference<T>(
   // if needed.
   const preloadPromise = preloadModule(serverReference);
   let promise: Promise<T>;
+  if (bound !== null && bound !== undefined && !isChunk(bound)) {
+    throw new Error('Invalid server reference.');
+  }
   if (bound) {
     promise = Promise.all([(bound: any), preloadPromise]).then(
       ([args]: Array<any>) => bindArgs(requireModule(serverReference), args),
@@ -561,10 +615,19 @@ function createModelResolver<T>(
     };
   }
   return value => {
-    for (let i = 1; i < path.length; i++) {
-      value = value[path[i]];
+    try {
+      parentObject[key] = map(response, resolvePath(value, path));
+    } catch (error) {
+      if (chunk.status === PENDING || chunk.status === BLOCKED) {
+        triggerErrorOnChunk(chunk, error);
+      } else if (chunk.status !== ERRORED) {
+        const erroredChunk: ErroredChunk<T> = (chunk: any);
+        erroredChunk.status = ERRORED;
+        erroredChunk.value = null;
+        erroredChunk.reason = error;
+      }
+      return;
     }
-    parentObject[key] = map(response, value);
 
     // If this is the root object for a model reference, where `blocked.value`
     // is a stale `null`, the resolved value can be used directly.
@@ -610,11 +673,7 @@ function getOutlinedModel<T>(
   // The status might have changed after initialization.
   switch (chunk.status) {
     case INITIALIZED:
-      let value = chunk.value;
-      for (let i = 1; i < path.length; i++) {
-        value = value[path[i]];
-      }
-      return map(response, value);
+      return map(response, resolvePath(chunk.value, path));
     case PENDING:
     case BLOCKED:
     case CYCLIC:
@@ -940,6 +999,9 @@ function parseModelString(
           id: ServerReferenceId,
           bound: null | Thenable<Array<any>>,
         } = getOutlinedModel(response, ref, obj, key, createModel);
+        if (!isPlainModelValue(metaData) || typeof metaData.id !== 'string') {
+          throw new Error('Invalid server reference.');
+        }
         return loadServerReference(
           response,
           metaData.id,
@@ -1177,4 +1239,19 @@ export function close(response: Response): void {
   // Ideally we should be able to early bail out if we kept a
   // ref count of pending chunks.
   reportGlobalError(response, new Error('Connection closed.'));
+}
+
+export function validateBoundActionMetaData(metaData: mixed): {
+  id: ServerReferenceId,
+  bound: null | Promise<Array<any>>,
+} {
+  const value: any = metaData;
+  if (
+    !isPlainModelValue(value) ||
+    typeof value.id !== 'string' ||
+    (value.bound != null && !isChunk(value.bound))
+  ) {
+    throw new Error('Invalid server reference.');
+  }
+  return value;
 }

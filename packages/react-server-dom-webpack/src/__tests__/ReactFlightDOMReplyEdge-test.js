@@ -333,4 +333,153 @@ describe('ReactFlightDOMReplyEdge', () => {
     expect(replyResult.method).toBe(greet);
     expect(replyResult.boundMethod()).toBe('hi, there');
   });
+
+  it('can decode references to own properties of a previously decoded object', async () => {
+    const shared = {nested: {value: 'shared'}};
+    const body = await ReactServerDOMClient.encodeReply({
+      a: shared,
+      b: shared.nested,
+      c: [shared],
+    });
+    const decoded = await ReactServerDOMServer.decodeReply(
+      body,
+      webpackServerMap,
+    );
+    expect(decoded.a).toEqual({nested: {value: 'shared'}});
+    expect(decoded.b).toEqual({value: 'shared'});
+    expect(decoded.c).toEqual([{nested: {value: 'shared'}}]);
+  });
+
+  it('does not execute code from a forged chunk in the reply', async () => {
+    delete globalThis.__pwned;
+    const body = new FormData();
+    body.append(
+      '0',
+      JSON.stringify({
+        then: '$1:__proto__:then',
+        status: 'resolved_model',
+        reason: -1,
+        value: '{"then":"$B1337"}',
+        _response: {
+          _prefix: 'globalThis.__pwned=1;//',
+          _formData: {get: '$1:constructor:constructor'},
+        },
+      }),
+    );
+    body.append('1', '"$@0"');
+
+    let error;
+    try {
+      await ReactServerDOMServer.decodeReply(body, webpackServerMap);
+    } catch (x) {
+      error = x;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toBe('Invalid reference.');
+    expect(globalThis.__pwned).toBe(undefined);
+  });
+
+  it('rejects references to prototype properties', async () => {
+    const references = [
+      '$1:__proto__',
+      '$1:constructor',
+      '$1:constructor:constructor',
+      '$1:hasOwnProperty',
+      '$1:then',
+      '$1:value',
+      '$1:_response',
+    ];
+    const targets = ['{}', '"$@2"'];
+    for (let i = 0; i < references.length; i++) {
+      const reference = references[i];
+      for (let j = 0; j < targets.length; j++) {
+        const target = targets[j];
+        const body = new FormData();
+        body.append('0', JSON.stringify({x: reference}));
+        body.append('1', target);
+        body.append('2', '"hi"');
+        await expect(
+          ReactServerDOMServer.decodeReply(body, webpackServerMap),
+        ).rejects.toThrow('Invalid reference.');
+      }
+    }
+  });
+
+  it('rejects prototype references that are resolved after a cycle', async () => {
+    await expect(
+      ReactServerDOMServer.decodeReply(
+        '{"a":{},"b":"$0:a:constructor:constructor"}',
+        webpackServerMap,
+      ),
+    ).rejects.toThrow('Invalid reference.');
+  });
+
+  it('does not let Chunk.prototype.then initialize a forged chunk', async () => {
+    delete globalThis.__pwned;
+    const root = ReactServerDOMServer.decodeReply('"hi"', webpackServerMap);
+    const chunkThen = Object.getPrototypeOf(root).then;
+    const forged = {
+      then: chunkThen,
+      status: 'resolved_model',
+      reason: -1,
+      value: '{"x":"$B0"}',
+      _response: {
+        _prefix: '',
+        _formData: {
+          get() {
+            globalThis.__pwned = 1;
+          },
+        },
+      },
+    };
+    await expect(Promise.resolve(forged)).rejects.toThrow('Invalid reference.');
+    expect(globalThis.__pwned).toBe(undefined);
+    expect(await root).toBe('hi');
+  });
+
+  it('rejects server reference metadata whose bound arguments are not a promise', async () => {
+    function greet(name) {
+      return 'hi, ' + name;
+    }
+    const ServerModule = serverExports({greet});
+    const body = new FormData();
+    body.append('0', '"$F1"');
+    body.append(
+      '1',
+      JSON.stringify({
+        id: ServerModule.greet.$$id,
+        bound: {then: '$F2'},
+      }),
+    );
+    body.append(
+      '2',
+      JSON.stringify({id: ServerModule.greet.$$id, bound: null}),
+    );
+    await expect(
+      ReactServerDOMServer.decodeReply(body, webpackServerMap),
+    ).rejects.toThrow('Invalid server reference.');
+  });
+
+  it('rejects forged bound arguments in decodeAction and decodeFormState', async () => {
+    function greet(name) {
+      return 'hi, ' + name;
+    }
+    const ServerModule = serverExports({greet});
+    const body = new FormData();
+    body.append('$ACTION_REF_1', '');
+    body.append(
+      '$ACTION_1:0',
+      JSON.stringify({
+        id: ServerModule.greet.$$id,
+        bound: {then: 'not a promise'},
+      }),
+    );
+    body.append('$ACTION_KEY', 'k');
+    expect(() =>
+      ReactServerDOMServer.decodeAction(body, webpackServerMap),
+    ).toThrow('Invalid server reference.');
+    expect(() =>
+      ReactServerDOMServer.decodeFormState('state', body, webpackServerMap),
+    ).toThrow('Invalid server reference.');
+  });
 });

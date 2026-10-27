@@ -20,7 +20,12 @@ import {
   requireModule,
 } from 'react-client/src/ReactFlightClientConfig';
 
-import {createResponse, close, getRoot} from './ReactFlightReplyServer';
+import {
+  createResponse,
+  close,
+  getRoot,
+  validateBoundActionMetaData,
+} from './ReactFlightReplyServer';
 
 type ServerReferenceId = any;
 
@@ -77,7 +82,7 @@ function decodeBoundActionMetaData(
     // $FlowFixMe
     throw refPromise.reason;
   }
-  return refPromise.value;
+  return validateBoundActionMetaData(refPromise.value);
 }
 
 export function decodeAction<T>(
