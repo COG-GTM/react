@@ -199,6 +199,29 @@ app.get('/', async function (req, res) {
   }
 });
 
+const srcRoot = path.resolve(__dirname, '../src');
+
+// Only load modules from the app's own source directory. Never pass a
+// client-supplied specifier (e.g. a data: URL, a Node built-in or a path that
+// escapes src/) to import().
+function resolveActionModuleURL(filepath) {
+  let actionPath;
+  try {
+    actionPath = url.fileURLToPath(filepath);
+  } catch (x) {
+    throw new Error('Invalid action');
+  }
+  const relativePath = path.relative(srcRoot, actionPath);
+  if (
+    relativePath === '' ||
+    relativePath.startsWith('..') ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new Error('Invalid action');
+  }
+  return url.pathToFileURL(actionPath).href;
+}
+
 app.post('/', bodyParser.text(), async function (req, res) {
   const noCache = req.headers['cache-control'] === 'no-cache';
   const {decodeReply, decodeReplyFromBusboy, decodeAction, decodeFormState} =
@@ -207,7 +230,7 @@ app.post('/', bodyParser.text(), async function (req, res) {
   if (serverReference) {
     // This is the client-side case
     const [filepath, name] = serverReference.split('#');
-    const action = (await import(filepath))[name];
+    const action = (await import(resolveActionModuleURL(filepath)))[name];
     // Validate that this is actually a function we intended to expose and
     // not the client trying to invoke arbitrary functions. In a real app,
     // you'd have a manifest verifying this before even importing it.
