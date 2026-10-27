@@ -333,4 +333,108 @@ describe('ReactFlightDOMReplyEdge', () => {
     expect(replyResult.method).toBe(greet);
     expect(replyResult.boundMethod()).toBe('hi, there');
   });
+
+  it('can resolve references to nested properties of outlined models', async () => {
+    const shared = {nested: {value: 'hello'}};
+    const body = await ReactServerDOMClient.encodeReply({
+      a: shared,
+      b: shared,
+      c: shared.nested,
+    });
+    const decoded = await ReactServerDOMServer.decodeReply(
+      body,
+      webpackServerMap,
+    );
+    expect(decoded.a).toEqual({nested: {value: 'hello'}});
+    expect(decoded.b).toEqual({nested: {value: 'hello'}});
+    expect(decoded.c).toEqual({value: 'hello'});
+  });
+
+  it('does not resolve references through prototype properties', async () => {
+    const body = new FormData();
+    body.append('1', '{}');
+    body.append('0', '{"fn":"$1:constructor:constructor"}');
+    await expect(
+      ReactServerDOMServer.decodeReply(body, webpackServerMap),
+    ).rejects.toThrow('Invalid reference.');
+
+    const body2 = new FormData();
+    body2.append('1', '{}');
+    body2.append('0', '{"proto":"$1:__proto__"}');
+    await expect(
+      ReactServerDOMServer.decodeReply(body2, webpackServerMap),
+    ).rejects.toThrow('Invalid reference.');
+  });
+
+  it('does not resolve references through internal chunks', async () => {
+    const body = new FormData();
+    body.append('1', '"$@0"');
+    body.append('0', '{"status":"$1:status","value":"$1:value"}');
+    await expect(
+      ReactServerDOMServer.decodeReply(body, webpackServerMap),
+    ).rejects.toThrow('Invalid reference.');
+  });
+
+  it('cannot execute code by faking an internal chunk', async () => {
+    delete globalThis.__pwned;
+    const body = new FormData();
+    body.append('1', '"$@0"');
+    body.append(
+      '0',
+      JSON.stringify({
+        then: '$1:__proto__:then',
+        status: 'resolved_model',
+        reason: -1,
+        value: '{"then":"$B1"}',
+        _response: {
+          _prefix: 'globalThis.__pwned=1;',
+          _formData: {
+            get: '$1:constructor:constructor',
+          },
+        },
+      }),
+    );
+    await expect(
+      ReactServerDOMServer.decodeReply(body, webpackServerMap),
+    ).rejects.toThrow();
+    // Give any thenables a chance to run.
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(globalThis.__pwned).toBe(undefined);
+  });
+
+  it('rejects server references with non-promise bound arguments', async () => {
+    function greet(name) {
+      return 'hi, ' + name;
+    }
+    const ServerModule = serverExports({
+      greet,
+    });
+
+    const body = new FormData();
+    body.append(
+      '1',
+      JSON.stringify({
+        id: ServerModule.greet.$$id,
+        bound: {then: '$2'},
+      }),
+    );
+    body.append('2', '"not a function"');
+    body.append('0', '"$F1"');
+    await expect(
+      ReactServerDOMServer.decodeReply(body, webpackServerMap),
+    ).rejects.toThrow('Invalid bound arguments for a Server Reference.');
+
+    const formData = new FormData();
+    formData.append('$ACTION_REF_1', '');
+    formData.append(
+      '$ACTION_1:0',
+      JSON.stringify({
+        id: ServerModule.greet.$$id,
+        bound: {then: 'x'},
+      }),
+    );
+    expect(() =>
+      ReactServerDOMServer.decodeAction(formData, webpackServerMap),
+    ).toThrow('Invalid bound arguments for a Server Reference.');
+  });
 });

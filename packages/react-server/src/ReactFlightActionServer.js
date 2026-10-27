@@ -20,7 +20,12 @@ import {
   requireModule,
 } from 'react-client/src/ReactFlightClientConfig';
 
-import {createResponse, close, getRoot} from './ReactFlightReplyServer';
+import {
+  createResponse,
+  close,
+  getRoot,
+  validateBoundArgs,
+} from './ReactFlightReplyServer';
 
 type ServerReferenceId = any;
 
@@ -77,7 +82,12 @@ function decodeBoundActionMetaData(
     // $FlowFixMe
     throw refPromise.reason;
   }
-  return refPromise.value;
+  const metaData = refPromise.value;
+  if (metaData === null || typeof metaData !== 'object') {
+    throw new Error('Invalid Server Reference metadata.');
+  }
+  validateBoundArgs(metaData.bound);
+  return metaData;
 }
 
 export function decodeAction<T>(
