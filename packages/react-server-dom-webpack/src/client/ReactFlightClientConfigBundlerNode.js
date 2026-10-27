@@ -23,6 +23,7 @@ import {
   isAsyncImport,
 } from '../shared/ReactFlightImportMetadata';
 import {prepareDestinationWithChunks} from 'react-client/src/ReactFlightClientConfig';
+import hasOwnProperty from 'shared/hasOwnProperty';
 
 export type ServerConsumerModuleMap = {
   [clientId: string]: {
@@ -30,7 +31,17 @@ export type ServerConsumerModuleMap = {
   },
 };
 
-export type ServerManifest = void;
+export type ServerManifestEntry = {
+  +specifier: string,
+  +name: string,
+};
+
+// Server References that may be loaded from a client request. When omitted,
+// only `file:` URLs whose export was registered with registerServerReference
+// are accepted.
+export type ServerManifest = void | null | {
+  +[id: ServerReferenceId]: ServerManifestEntry,
+};
 
 export type ServerReferenceId = string;
 
@@ -41,7 +52,13 @@ export opaque type ClientReference<T> = {
   specifier: string,
   name: string,
   async?: boolean,
+  // Set when the reference was not resolved through a ServerManifest and the
+  // loaded export still has to be verified as a registered Server Reference.
+  serverReferenceId?: string,
 };
+
+const SERVER_REFERENCE_TAG = Symbol.for('react.server.reference');
+const FILE_PROTOCOL = 'file:';
 
 // The reason this function needs to defined here in this file instead of just
 // being exported directly from the WebpackDestination... file is because the
@@ -91,10 +108,38 @@ export function resolveServerReference<T>(
   bundlerConfig: ServerManifest,
   id: ServerReferenceId,
 ): ClientReference<T> {
+  if (typeof id !== 'string') {
+    throw new Error(
+      'Attempted to load a Server Reference outside the hosted root.',
+    );
+  }
+  if (bundlerConfig != null) {
+    if (!hasOwnProperty.call(bundlerConfig, id)) {
+      throw new Error(
+        'Could not find the module "' +
+          id +
+          '" in the React Server Manifest. ' +
+          'This is probably a bug in the React Server Components bundler.',
+      );
+    }
+    const resolvedModuleData = bundlerConfig[id];
+    return {
+      specifier: resolvedModuleData.specifier,
+      name: resolvedModuleData.name,
+    };
+  }
+  // Without a manifest the id comes straight from the request, so never hand
+  // anything but a local file URL (e.g. no data:, node: or bare specifiers)
+  // to import().
   const idx = id.lastIndexOf('#');
+  if (idx <= FILE_PROTOCOL.length || !id.startsWith(FILE_PROTOCOL)) {
+    throw new Error(
+      'Attempted to load a Server Reference outside the hosted root.',
+    );
+  }
   const specifier = id.slice(0, idx);
   const name = id.slice(idx + 1);
-  return {specifier, name};
+  return {specifier, name, serverReferenceId: id};
 }
 
 const asyncModuleCache: Map<string, Thenable<any>> = new Map();
@@ -148,17 +193,31 @@ export function requireModule<T>(metadata: ClientReference<T>): T {
   } else {
     throw promise.reason;
   }
+  let value;
   if (metadata.name === '*') {
     // This is a placeholder value that represents that the caller imported this
     // as a CommonJS module as is.
-    return moduleExports;
-  }
-  if (metadata.name === '') {
+    value = moduleExports;
+  } else if (metadata.name === '') {
     // This is a placeholder value that represents that the caller accessed the
     // default property of this if it was an ESM interop module.
-    return moduleExports.default;
+    value = moduleExports.default;
+  } else {
+    value = moduleExports[metadata.name];
   }
-  return moduleExports[metadata.name];
+  const serverReferenceId = metadata.serverReferenceId;
+  if (
+    serverReferenceId !== undefined &&
+    (typeof value !== 'function' ||
+      (value: any).$$typeof !== SERVER_REFERENCE_TAG ||
+      (value: any).$$id !== serverReferenceId)
+  ) {
+    throw new Error(
+      'Attempted to load a Server Reference that was not registered with ' +
+        'registerServerReference.',
+    );
+  }
+  return value;
 }
 
 export function getModuleDebugInfo<T>(metadata: ClientReference<T>): null {

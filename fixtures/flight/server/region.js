@@ -199,6 +199,9 @@ app.get('/', async function (req, res) {
   }
 });
 
+const srcRootURL =
+  url.pathToFileURL(path.resolve(__dirname, '../src')).href + '/';
+
 app.post('/', bodyParser.text(), async function (req, res) {
   const noCache = req.headers['cache-control'] === 'no-cache';
   const {decodeReply, decodeReplyFromBusboy, decodeAction, decodeFormState} =
@@ -207,6 +210,12 @@ app.post('/', bodyParser.text(), async function (req, res) {
   if (serverReference) {
     // This is the client-side case
     const [filepath, name] = serverReference.split('#');
+    // Only load modules from the app's own source directory. Never pass a
+    // client-supplied specifier (e.g. a data: URL or a Node built-in) to
+    // import().
+    if (!filepath.startsWith(srcRootURL)) {
+      throw new Error('Invalid action');
+    }
     const action = (await import(filepath))[name];
     // Validate that this is actually a function we intended to expose and
     // not the client trying to invoke arbitrary functions. In a real app,
