@@ -21,9 +21,7 @@ describe('ReactFlightDOMNodeUnbundled server references', () => {
     delete globalThis.__pwned;
 
     jest.mock('react', () => require('react/react.react-server'));
-    ReactServerDOMServer = require(
-      'react-server-dom-webpack/server.node.unbundled',
-    );
+    ReactServerDOMServer = require('react-server-dom-webpack/server.node.unbundled');
   });
 
   afterEach(() => {
