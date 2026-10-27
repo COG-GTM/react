@@ -164,10 +164,14 @@ Chunk.prototype.then = function <T>(
   }
 };
 
+type FormDataIndexEntry = [string, string | Blob, void | string];
+
 export type Response = {
   _bundlerConfig: ServerManifest,
   _prefix: string,
   _formData: FormData,
+  _formDataIndex: null | Map<string, Array<FormDataIndexEntry>>,
+  _formDataReferences: Map<string, FormData>,
   _chunks: Map<number, SomeChunk<any>>,
   _closed: boolean,
   _closedReason: mixed,
@@ -979,19 +983,32 @@ function parseModelString(
       case 'K': {
         // FormData
         const stringId = value.slice(2);
-        const formPrefix = response._prefix + stringId + '_';
+        // Repeated references to the same FormData resolve to the same
+        // instance, like other outlined models, so a reply can't multiply
+        // the number of entries we copy.
+        const references = response._formDataReferences;
+        const existing = references.get(stringId);
+        if (existing !== undefined) {
+          return existing;
+        }
         const data = new FormData();
-        const backingFormData = response._formData;
         // We assume that the reference to FormData always comes after each
         // entry that it references so we can assume they all exist in the
         // backing store already.
-        // $FlowFixMe[prop-missing] FormData has forEach on it.
-        backingFormData.forEach((entry: File | string, entryKey: string) => {
-          if (entryKey.startsWith(formPrefix)) {
-            // $FlowFixMe[incompatible-call]
-            data.append(entryKey.slice(formPrefix.length), entry);
+        const entries = getFormDataIndex(response).get(stringId);
+        if (entries !== undefined) {
+          for (let i = 0; i < entries.length; i++) {
+            const [name, entry, filename] = entries[i];
+            if (filename === undefined) {
+              // $FlowFixMe[incompatible-call]
+              data.append(name, entry);
+            } else {
+              // $FlowFixMe[incompatible-call]
+              data.append(name, entry, filename);
+            }
           }
-        });
+        }
+        references.set(stringId, data);
         return data;
       }
       case 'i': {
@@ -1088,6 +1105,47 @@ function parseModelString(
   return value;
 }
 
+function indexFormDataEntry(
+  response: Response,
+  index: Map<string, Array<FormDataIndexEntry>>,
+  key: string,
+  entry: string | Blob,
+  filename: void | string,
+): void {
+  const prefix = response._prefix;
+  if (!key.startsWith(prefix)) {
+    return;
+  }
+  const separator = key.indexOf('_', prefix.length);
+  if (separator === -1) {
+    return;
+  }
+  const id = key.slice(prefix.length, separator);
+  let entries = index.get(id);
+  if (entries === undefined) {
+    entries = [];
+    index.set(id, entries);
+  }
+  entries.push([key.slice(separator + 1), entry, filename]);
+}
+
+// Groups the backing entries by FormData reference id in a single pass so that
+// resolving a reference doesn't have to scan every field in the reply.
+function getFormDataIndex(
+  response: Response,
+): Map<string, Array<FormDataIndexEntry>> {
+  let index = response._formDataIndex;
+  if (index === null) {
+    const newIndex: Map<string, Array<FormDataIndexEntry>> = new Map();
+    // $FlowFixMe[prop-missing] FormData has forEach on it.
+    response._formData.forEach((entry: File | string, entryKey: string) => {
+      indexFormDataEntry(response, newIndex, entryKey, entry, undefined);
+    });
+    response._formDataIndex = index = newIndex;
+  }
+  return index;
+}
+
 export function createResponse(
   bundlerConfig: ServerManifest,
   formFieldPrefix: string,
@@ -1099,6 +1157,8 @@ export function createResponse(
     _bundlerConfig: bundlerConfig,
     _prefix: formFieldPrefix,
     _formData: backingFormData,
+    _formDataIndex: null,
+    _formDataReferences: new Map(),
     _chunks: chunks,
     _closed: false,
     _closedReason: null,
@@ -1114,6 +1174,10 @@ export function resolveField(
 ): void {
   // Add this field to the backing store.
   response._formData.append(key, value);
+  const index = response._formDataIndex;
+  if (index !== null) {
+    indexFormDataEntry(response, index, key, value, undefined);
+  }
   const prefix = response._prefix;
   if (key.startsWith(prefix)) {
     const chunks = response._chunks;
@@ -1129,6 +1193,10 @@ export function resolveField(
 export function resolveFile(response: Response, key: string, file: File): void {
   // Add this field to the backing store.
   response._formData.append(key, file);
+  const index = response._formDataIndex;
+  if (index !== null) {
+    indexFormDataEntry(response, index, key, file, undefined);
+  }
 }
 
 export opaque type FileHandle = {
@@ -1169,6 +1237,10 @@ export function resolveFileComplete(
   // to create a File object.
   const blob = new Blob(handle.chunks, {type: handle.mime});
   response._formData.append(key, blob, handle.filename);
+  const index = response._formDataIndex;
+  if (index !== null) {
+    indexFormDataEntry(response, index, key, blob, handle.filename);
+  }
 }
 
 export function close(response: Response): void {

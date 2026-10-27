@@ -236,6 +236,76 @@ describe('ReactFlightDOMReply', () => {
     expect(formDataB2.get('greeting')).toBe('hi');
   });
 
+  it('reuses the same FormData for repeated references to it', async () => {
+    const fieldCount = 200;
+    const body = new FormData();
+    for (let i = 0; i < fieldCount; i++) {
+      body.append('1_x' + i, 'v' + i);
+    }
+    body.append('0', JSON.stringify(new Array(fieldCount).fill('$K1')));
+
+    const originalAppend = FormData.prototype.append;
+    let appendCalls = 0;
+    FormData.prototype.append = function () {
+      appendCalls++;
+      return originalAppend.apply(this, arguments);
+    };
+    let result;
+    try {
+      result = await ReactServerDOMServer.decodeReply(body, webpackServerMap);
+    } finally {
+      FormData.prototype.append = originalAppend;
+    }
+
+    expect(result.length).toBe(fieldCount);
+    for (let i = 0; i < fieldCount; i++) {
+      expect(result[i]).toBe(result[0]);
+    }
+    expect(Array.from(result[0]).length).toBe(fieldCount);
+    expect(result[0].get('x7')).toBe('v7');
+    // Entries copied stay proportional to the number of fields rather than
+    // fields times references.
+    expect(appendCalls).toBe(fieldCount);
+  });
+
+  it('does not scan every field for each distinct FormData reference', async () => {
+    const refCount = 200;
+    const body = new FormData();
+    const root = [];
+    for (let i = 1; i <= refCount; i++) {
+      body.append(i + '_field', 'value' + i);
+      root.push('$K' + i);
+    }
+    body.append('0', JSON.stringify(root));
+
+    const originalForEach = FormData.prototype.forEach;
+    let visited = 0;
+    FormData.prototype.forEach = function (callback, thisArg) {
+      return originalForEach.call(
+        this,
+        function () {
+          visited++;
+          return callback.apply(this, arguments);
+        },
+        thisArg,
+      );
+    };
+    let result;
+    try {
+      result = await ReactServerDOMServer.decodeReply(body, webpackServerMap);
+    } finally {
+      FormData.prototype.forEach = originalForEach;
+    }
+
+    expect(result.length).toBe(refCount);
+    for (let i = 0; i < refCount; i++) {
+      expect(Array.from(result[i]).length).toBe(1);
+      expect(result[i].get('field')).toBe('value' + (i + 1));
+    }
+    // The backing store is walked once, not once per reference.
+    expect(visited).toBe(refCount + 1);
+  });
+
   it('can pass a Date as a reply', async () => {
     const d = new Date(1234567890123);
     const body = await ReactServerDOMClient.encodeReply(d);
