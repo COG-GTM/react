@@ -106,6 +106,10 @@ import ReactVersion from 'shared/ReactVersion';
 
 import isArray from 'shared/isArray';
 
+import hasOwnProperty from 'shared/hasOwnProperty';
+
+import getPrototypeOf from 'shared/getPrototypeOf';
+
 import * as React from 'react';
 
 import type {SharedStateServer} from 'react/src/ReactSharedInternalsServer';
@@ -261,6 +265,29 @@ function ReactPromise(status: any, value: any, reason: any) {
 }
 // We subclass Promise.prototype so that we get other methods like .catch
 ReactPromise.prototype = (Object.create(Promise.prototype): any);
+
+// Decoded data must never be able to pass off a plain object as one of our
+// internal chunks, since chunks carry the raw model and the Response.
+function isChunk(value: mixed): boolean {
+  return value instanceof ReactPromise;
+}
+
+const ObjectPrototype = Object.prototype;
+const ArrayPrototype = Array.prototype;
+
+// Reference paths may only step into own properties of plain objects and
+// arrays produced by the decoder, never into prototypes, chunks or functions.
+function hasOwnReferenceProperty(value: mixed, name: string): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const prototype = getPrototypeOf(value);
+  return (
+    (prototype === ObjectPrototype || prototype === ArrayPrototype) &&
+    hasOwnProperty.call(value, name)
+  );
+}
+
 // TODO: This doesn't return a new Promise chain unlike the real .then
 ReactPromise.prototype.then = function <T>(
   this: SomeChunk<T>,
@@ -268,6 +295,12 @@ ReactPromise.prototype.then = function <T>(
   reject?: (reason: mixed) => mixed,
 ) {
   const chunk: SomeChunk<T> = this;
+  if (!isChunk(chunk)) {
+    if (typeof reject === 'function') {
+      reject(new Error('Invalid chunk.'));
+    }
+    return;
+  }
   // If we have resolved content, we try to initialize it first which
   // might put us back into one of the other states.
   switch (chunk.status) {
@@ -423,6 +456,9 @@ const debugChannelRegistry =
     : null;
 
 function readChunk<T>(chunk: SomeChunk<T>): T {
+  if (!isChunk(chunk)) {
+    throw new Error('Invalid chunk.');
+  }
   // If we have resolved content, we try to initialize it first which
   // might put us back into one of the other states.
   switch (chunk.status) {
@@ -949,6 +985,11 @@ function initializeDebugChunk(
 }
 
 function initializeModelChunk<T>(chunk: ResolvedModelChunk<T>): void {
+  if (!isChunk(chunk)) {
+    // A forged chunk (e.g. the _payload of a decoded lazy-looking object) is
+    // left untouched so it is never parsed with an attacker-supplied Response.
+    return;
+  }
   const prevHandler = initializingHandler;
   const prevChunk = initializingChunk;
   initializingHandler = null;
@@ -1024,6 +1065,9 @@ function initializeModelChunk<T>(chunk: ResolvedModelChunk<T>): void {
 }
 
 function initializeModuleChunk<T>(chunk: ResolvedModuleChunk<T>): void {
+  if (!isChunk(chunk)) {
+    return;
+  }
   try {
     const value: T = requireModule(chunk.value);
     const initializedChunk: InitializedChunk<T> = (chunk: any);
@@ -1476,7 +1520,12 @@ function fulfillReference(
         }
       }
     }
-    value = value[path[i]];
+    const name = path[i];
+    if (!hasOwnReferenceProperty(value, name)) {
+      rejectReference(reference, new Error('Invalid reference.'));
+      return;
+    }
+    value = value[name];
   }
 
   while (
@@ -2016,7 +2065,11 @@ function getOutlinedModel<T>(
             }
           }
         }
-        value = value[path[i]];
+        const name = path[i];
+        if (!hasOwnReferenceProperty(value, name)) {
+          throw new Error('Invalid reference.');
+        }
+        value = value[name];
       }
 
       while (
