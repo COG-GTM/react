@@ -3051,4 +3051,127 @@ describe('ReactFlightDOMBrowser', () => {
       `);
     }
   });
+
+  function createRawFlightStream(rows) {
+    let controller;
+    const stream = new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const encoder = new TextEncoder();
+    return {
+      stream,
+      push(row) {
+        controller.enqueue(encoder.encode(row + '\n'));
+      },
+      close() {
+        controller.close();
+      },
+    };
+  }
+
+  it('rejects a forged chunk in the payload without running its code', async () => {
+    const marker = '__reactFlightForgedChunkExecuted';
+    delete globalThis[marker];
+    const {stream, push, close} = createRawFlightStream();
+    push('1:"$@0"');
+    push(
+      '0:' +
+        JSON.stringify({
+          then: '$1:__proto__:then',
+          status: 'resolved_model',
+          value: JSON.stringify({
+            toString: 'globalThis.' + marker + ' = true;',
+          }),
+          reason: {_fromJSON: '$1:constructor:constructor'},
+        }),
+    );
+    close();
+
+    const response = ReactServerDOMClient.createFromReadableStream(stream);
+    let error = null;
+    try {
+      await response;
+    } catch (x) {
+      error = x;
+    }
+    expect(globalThis[marker]).toBe(undefined);
+    expect(error).not.toBe(null);
+    expect(error.message).toBe('Invalid reference.');
+  });
+
+  it('does not follow inherited properties in an outlined model reference', async () => {
+    const {stream, push, close} = createRawFlightStream();
+    push('1:{"a":{}}');
+    push('0:{"ctor":"$1:a:constructor"}');
+    close();
+
+    const response = ReactServerDOMClient.createFromReadableStream(stream);
+    await expect(response).rejects.toThrow('Invalid reference.');
+  });
+
+  it('does not follow inherited properties in a deferred model reference', async () => {
+    const {stream, push, close} = createRawFlightStream();
+    push('0:{"proto":"$1:a:__proto__"}');
+
+    const response = ReactServerDOMClient.createFromReadableStream(stream);
+    let result = null;
+    response.then(
+      value => {
+        result = {value};
+      },
+      error => {
+        result = {error};
+      },
+    );
+    push('1:{"a":{}}');
+    close();
+    await expect(response).rejects.toThrow('Invalid reference.');
+    expect(result.error.message).toBe('Invalid reference.');
+  });
+
+  it('still resolves references to own properties of decoded objects', async () => {
+    const {stream, push, close} = createRawFlightStream();
+    push('1:{"a":{"b":[1,{"c":"hello"}]}}');
+    push('0:{"c":"$1:a:b:1:c","b":"$1:a:b"}');
+    close();
+
+    const response = ReactServerDOMClient.createFromReadableStream(stream);
+    const result = await response;
+    expect(result).toEqual({c: 'hello', b: [1, {c: 'hello'}]});
+  });
+
+  it('does not treat a forged lazy payload as an internal chunk', async () => {
+    const marker = '__reactFlightForgedLazyExecuted';
+    delete globalThis[marker];
+    const {stream, push, close} = createRawFlightStream();
+    push(
+      '1:' +
+        JSON.stringify({
+          fake: {
+            $$typeof: '$Sreact.lazy',
+            _payload: {
+              status: 'resolved_model',
+              value: JSON.stringify({
+                toString: 'globalThis.' + marker + ' = true;',
+              }),
+              reason: {_fromJSON: '$1:constructor:constructor'},
+            },
+          },
+        }),
+    );
+    push('0:{"x":"$1:fake:y"}');
+    close();
+
+    const response = ReactServerDOMClient.createFromReadableStream(stream);
+    let error = null;
+    try {
+      await response;
+    } catch (x) {
+      error = x;
+    }
+    expect(globalThis[marker]).toBe(undefined);
+    expect(error).not.toBe(null);
+  });
 });
