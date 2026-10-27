@@ -2152,6 +2152,83 @@ describe('ReactFlight', () => {
   });
 
   // @gate enableTaint
+  it('does not leak tainted values passed to a Server Component through debug info', async () => {
+    const process = {
+      env: {
+        SECRET: '3e971ecc1485fe78625598bf9b6f85db',
+      },
+    };
+    ReactServer.experimental_taintUniqueValue(
+      'Cannot pass a secret token to the client',
+      process,
+      process.env.SECRET,
+    );
+
+    const currentUser = {
+      name: 'Seb',
+      password: 'b4d3c0d3d-password',
+      token: BigInt('0x3e971ecc1485fe78625598bf9b6f85de'),
+    };
+    ReactServer.experimental_taintObjectReference(
+      "Don't pass the raw user object to the client",
+      currentUser,
+    );
+    ReactServer.experimental_taintUniqueValue(
+      'Cannot pass a secret bigint token to the client',
+      currentUser,
+      currentUser.token,
+    );
+
+    function onChange() {
+      return 'b4d3c0d3d-function-body';
+    }
+    ReactServer.experimental_taintObjectReference(
+      'A change handler cannot be passed to the client',
+      onChange,
+    );
+
+    function Greeting({token, user, bigToken, handler}) {
+      return <span>Hello</span>;
+    }
+
+    const errors = [];
+    const transport = ReactNoopFlightServer.render(
+      <Greeting
+        token={process.env.SECRET}
+        user={currentUser}
+        bigToken={currentUser.token}
+        handler={onChange}
+      />,
+      {
+        onError(x) {
+          errors.push(x.message);
+        },
+      },
+    );
+
+    expect(errors).toEqual([]);
+
+    const decoder = new TextDecoder();
+    const payload = transport.map(chunk => decoder.decode(chunk)).join('');
+    expect(payload).not.toContain(process.env.SECRET);
+    expect(payload).not.toContain(currentUser.password);
+    expect(payload).not.toContain(currentUser.token.toString());
+    expect(payload).not.toContain('b4d3c0d3d-function-body');
+    if (__DEV__) {
+      expect(payload).toContain('Cannot pass a secret token to the client');
+      expect(payload).toContain("Don't pass the raw user object to the client");
+      expect(payload).toContain(
+        'A change handler cannot be passed to the client',
+      );
+    }
+
+    await act(async () => {
+      ReactNoop.render(await ReactNoopFlightClient.read(transport));
+    });
+    expect(ReactNoop).toMatchRenderedOutput(<span>Hello</span>);
+  });
+
+  // @gate enableTaint
   it('keep a tainted value tainted until the end of any pending requests', async () => {
     function UserClient({user}) {
       return <span>{user.name}</span>;
