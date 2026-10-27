@@ -35,7 +35,7 @@ describe('ReactFlightDOMNodeUnbundled', () => {
     delete globalThis.__pwned;
   });
 
-  function decodeActionId(id) {
+  async function decodeActionId(id) {
     const body = new FormData();
     body.append('$ACTION_ID_' + id, '');
     body.append('name', 'world');
