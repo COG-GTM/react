@@ -414,7 +414,9 @@ describe('ReactFlightDOMReplyEdge', () => {
       ReactServerDOMServer.decodeReply(body, webpackServerMap),
     ).rejects.toThrow();
     // Give any thenables a chance to run.
-    await new Promise(resolve => setTimeout(resolve, 10));
+    for (let i = 0; i < 20; i++) {
+      await Promise.resolve();
+    }
     expect(globalThis.__pwned).toBe(undefined);
   });
 
