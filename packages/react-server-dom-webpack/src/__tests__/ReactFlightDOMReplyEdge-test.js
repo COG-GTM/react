@@ -432,9 +432,7 @@ describe('ReactFlightDOMReplyEdge', () => {
         },
       },
     };
-    await expect(Promise.resolve(forged)).rejects.toThrow(
-      'Invalid reference.',
-    );
+    await expect(Promise.resolve(forged)).rejects.toThrow('Invalid reference.');
     expect(globalThis.__pwned).toBe(undefined);
     expect(await root).toBe('hi');
   });
