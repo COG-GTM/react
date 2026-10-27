@@ -575,11 +575,18 @@ function decodeReplyFromBusboy<T>(
   });
   busboyStream.on('file', (name, value, {filename, encoding, mimeType}) => {
     if (encoding.toLowerCase() === 'base64') {
-      throw new Error(
-        "React doesn't accept base64 encoded file uploads because we don't expect " +
-          "form data passed from a browser to ever encode data that way. If that's " +
-          'the wrong assumption, we can easily fix it.',
+      // Throwing here would escape Busboy's 'error' event as an uncaught
+      // exception, so we error the response and drain the part instead.
+      reportGlobalError(
+        response,
+        new Error(
+          "React doesn't accept base64 encoded file uploads because we don't expect " +
+            "form data passed from a browser to ever encode data that way. If that's " +
+            'the wrong assumption, we can easily fix it.',
+        ),
       );
+      value.resume();
+      return;
     }
     pendingFiles++;
     const file = resolveFileInfo(response, name, filename, mimeType);
