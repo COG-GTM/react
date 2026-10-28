@@ -23,6 +23,7 @@ import {
   isAsyncImport,
 } from '../shared/ReactFlightImportMetadata';
 import {prepareDestinationWithChunks} from 'react-client/src/ReactFlightClientConfig';
+import hasOwnProperty from 'shared/hasOwnProperty';
 
 export type ServerConsumerModuleMap = {
   [clientId: string]: {
@@ -41,7 +42,19 @@ export opaque type ClientReference<T> = {
   specifier: string,
   name: string,
   async?: boolean,
+  serverReferenceId?: string,
 };
+
+const SERVER_REFERENCE_TAG = Symbol.for('react.server.reference');
+
+function throwUnknownServerReference(id: ServerReferenceId): empty {
+  throw new Error(
+    'Could not find the module "' +
+      id +
+      '" in the React Server Manifest. ' +
+      'This is probably a bug in the React Server Components bundler.',
+  );
+}
 
 // The reason this function needs to defined here in this file instead of just
 // being exported directly from the WebpackDestination... file is because the
@@ -91,10 +104,20 @@ export function resolveServerReference<T>(
   bundlerConfig: ServerManifest,
   id: ServerReferenceId,
 ): ClientReference<T> {
+  // The unbundled Node build has no manifest. Server Reference ids are the
+  // file URL of a "use server" module followed by the export name. Only
+  // local file URLs are accepted so that the client can't load arbitrary
+  // specifiers such as data: URLs, built-ins or packages.
   const idx = id.lastIndexOf('#');
+  if (idx === -1) {
+    throwUnknownServerReference(id);
+  }
   const specifier = id.slice(0, idx);
   const name = id.slice(idx + 1);
-  return {specifier, name};
+  if (!specifier.startsWith('file:///')) {
+    throwUnknownServerReference(id);
+  }
+  return {specifier, name, serverReferenceId: id};
 }
 
 const asyncModuleCache: Map<string, Thenable<any>> = new Map();
@@ -147,6 +170,24 @@ export function requireModule<T>(metadata: ClientReference<T>): T {
     moduleExports = promise.value;
   } else {
     throw promise.reason;
+  }
+  const serverReferenceId = metadata.serverReferenceId;
+  if (serverReferenceId !== undefined) {
+    // Only exports that were registered as Server References with this exact
+    // id may be returned for a Server Reference.
+    const name = metadata.name;
+    const value: any =
+      moduleExports != null && hasOwnProperty.call(moduleExports, name)
+        ? moduleExports[name]
+        : undefined;
+    if (
+      typeof value !== 'function' ||
+      value.$$typeof !== SERVER_REFERENCE_TAG ||
+      value.$$id !== serverReferenceId
+    ) {
+      throwUnknownServerReference(serverReferenceId);
+    }
+    return value;
   }
   if (metadata.name === '*') {
     // This is a placeholder value that represents that the caller imported this
