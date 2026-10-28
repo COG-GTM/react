@@ -42,15 +42,17 @@ describe('ReactFlightDOMNodeUnbundled', () => {
     return ReactServerDOMServer.decodeAction(body);
   }
 
-  // Loading a module goes through import(), which Jest can't run without
-  // --experimental-vm-modules, so valid ids are checked at the resolver level.
-  it('resolves file: URL server reference ids', () => {
-    const {
-      resolveServerReference,
-    } = require('react-server-dom-webpack/src/client/ReactFlightClientConfigBundlerNode');
-    const metadata = resolveServerReference(null, ACTIONS_MODULE + '#greet');
-    expect(metadata.specifier).toBe(ACTIONS_MODULE);
-    expect(metadata.name).toBe('greet');
+  it('passes file: URL server reference ids on to the module loader', async () => {
+    // The module doesn't exist (and Jest can't run import() without
+    // --experimental-vm-modules), so loading still fails, but not because the
+    // id was rejected.
+    const error = await decodeActionId(ACTIONS_MODULE + '#greet').then(
+      () => null,
+      e => e,
+    );
+    expect(error === null ? '' : String(error.message)).not.toContain(
+      MANIFEST_ERROR,
+    );
   });
 
   it('rejects data: URL specifiers without importing them', async () => {
